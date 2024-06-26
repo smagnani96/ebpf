@@ -2,6 +2,7 @@ package ebpf
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -1555,6 +1556,45 @@ func newMapIterator(target *Map) *MapIterator {
 		target:     target,
 		maxEntries: target.maxEntries,
 	}
+}
+
+func (mi *MapIterator) Range(keysOut, valuesOut interface{}) bool {
+	count, err := batchCount(keysOut, valuesOut)
+	if err != nil {
+		mi.err = err
+		return false
+	}
+
+	if mi.fallback {
+		return false
+	}
+
+	cursorLen := int(mi.target.keySize)
+	if cursorLen < 4 {
+		cursorLen = 4
+	}
+
+	c := MapBatchCursor{m: mi.target, opaque: make([]byte, cursorLen)}
+	binary.LittleEndian.PutUint32(c.opaque, mi.count)
+
+	n, err := mi.target.BatchLookup(&c, keysOut, valuesOut, nil)
+	if errors.Is(mi.err, ErrNotSupported) || errors.Is(mi.err, unix.EINVAL) {
+		mi.fallback = true
+		return mi.Range(keysOut, valuesOut)
+	}
+
+	if n == 0 {
+		mi.err = err
+		return false
+	}
+	mi.count = mi.count + uint32(n)
+
+	fmt.Println(keysOut, valuesOut, n, mi.err, mi.count)
+
+	if n != count {
+		// finisci iterativamente
+	}
+	return true
 }
 
 // Next decodes the next key and value. If the iterator is created

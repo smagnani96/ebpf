@@ -1248,6 +1248,33 @@ func TestMapDrain(t *testing.T) {
 	})
 }
 
+func TestMapRange(t *testing.T) {
+	hash, err := NewMap(&MapSpec{
+		Type:       Hash,
+		KeySize:    5,
+		ValueSize:  4,
+		MaxEntries: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hash.Close()
+
+	if err := hash.Put("hello", uint32(21)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := hash.Put("world", uint32(42)); err != nil {
+		t.Fatal(err)
+	}
+
+	keys := make([][5]byte, 2)
+	values := make([]uint32, 2)
+
+	entries := hash.Iterate()
+	entries.Range(keys, values)
+}
+
 func TestMapIteratorAllocations(t *testing.T) {
 	arr, err := NewMap(&MapSpec{
 		Type:       Array,
