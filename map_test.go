@@ -1063,7 +1063,7 @@ func TestIterateEmptyMap(t *testing.T) {
 
 			var key string
 			var value uint64
-			if entries.Next(&key, &value) != false {
+			if entries.Next(&key, &value) {
 				t.Error("Empty hash should not be iterable")
 			}
 			if err := entries.Err(); err != nil {
@@ -1094,61 +1094,39 @@ func TestIterateEmptyMap(t *testing.T) {
 func TestDrainEmptyMap(t *testing.T) {
 	for _, mapType := range []MapType{
 		Hash,
-		SockHash,
+		Queue,
 	} {
 		t.Run(mapType.String(), func(t *testing.T) {
+			var (
+				keySize = uint32(4)
+				key     string
+				value   uint64
+				keyPtr  interface{} = &key
+			)
+
+			if mapType == Queue {
+				testutils.SkipOnOldKernel(t, "4.20", "map type queue")
+				keySize = 0
+				keyPtr = nil
+			}
+
 			m, err := NewMap(&MapSpec{
 				Type:       mapType,
-				KeySize:    4,
+				KeySize:    keySize,
 				ValueSize:  8,
 				MaxEntries: 2,
 			})
-			if errors.Is(err, unix.EINVAL) {
-				t.Skip(mapType, "is not supported")
-			}
-			if err != nil {
-				t.Fatal("Can't create map:", err)
-			}
+			qt.Assert(t, qt.IsNil(err))
 			defer m.Close()
 
-			var (
-				key   string
-				value uint64
-			)
 			entries := m.Drain()
-			if entries.Next(&key, &value) {
+			if entries.Next(keyPtr, &value) {
 				t.Errorf("Empty %v should not be drainable", mapType)
 			}
-			if err := entries.Err(); err != nil {
-				t.Errorf("Empty %v shouldn't return an error: %v", mapType, err)
-			}
+
+			qt.Assert(t, qt.IsNil(entries.Err()))
 		})
 	}
-	t.Run(Queue.String(), func(t *testing.T) {
-		testutils.SkipOnOldKernel(t, "4.20", "map type queue")
-
-		m, err := NewMap(&MapSpec{
-			Type:       Queue,
-			ValueSize:  8,
-			MaxEntries: 2,
-		})
-		if errors.Is(err, unix.EINVAL) {
-			t.Skip(Queue, "is not supported")
-		}
-		if err != nil {
-			t.Fatal("Can't create map:", err)
-		}
-		defer m.Close()
-
-		var value uint64
-		entries := m.Drain()
-		if entries.Next(nil, &value) {
-			t.Errorf("Empty %v should not be drainable", Queue)
-		}
-		if err := entries.Err(); err != nil {
-			t.Errorf("Empty %v shouldn't return an error: %v", Queue, err)
-		}
-	})
 }
 
 func TestMapIterate(t *testing.T) {
@@ -1163,111 +1141,118 @@ func TestMapIterate(t *testing.T) {
 	}
 	defer hash.Close()
 
-	for k, v := range map[string]uint32{"hello": 42, "world": 4242} {
-		if err := hash.Put(k, v); err != nil {
-			t.Fatal(err)
-		}
-	}
-
 	var (
 		key   string
 		value uint32
 		keys  []string
+		data  = []string{"hello", "world"}
 	)
+
+	for i, k := range data {
+		if err := hash.Put(k, uint32(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	entries := hash.Iterate()
 	for entries.Next(&key, &value) {
 		keys = append(keys, key)
 	}
 
-	if err := entries.Err(); err != nil {
-		t.Fatal(err)
-	}
+	qt.Assert(t, qt.IsNil(err))
 
 	sort.Strings(keys)
-	qt.Assert(t, qt.DeepEquals(keys, []string{"hello", "world"}))
+	qt.Assert(t, qt.DeepEquals(keys, data))
 }
 
 func TestMapDrain(t *testing.T) {
-	t.Run(Hash.String(), func(t *testing.T) {
-		hash, err := NewMap(&MapSpec{
-			Type:       Hash,
-			KeySize:    5,
-			ValueSize:  4,
-			MaxEntries: 2,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer hash.Close()
+	for _, mapType := range []MapType{
+		Hash,
+		Queue,
+	} {
+		t.Run(Hash.String(), func(t *testing.T) {
+			var (
+				key, value uint32
+				values     []uint32
+				anyKey     interface{}
+				keyPtr     interface{} = &key
+				keySize    uint32      = 4
+				data                   = []uint32{0, 1}
+			)
 
-		for k, v := range map[string]uint32{"hello": 42, "world": 4242} {
-			if err := hash.Put(k, v); err != nil {
-				t.Fatal(err)
+			if mapType == Queue {
+				testutils.SkipOnOldKernel(t, "4.20", "map type queue")
+				keySize = 0
+				keyPtr = nil
 			}
-		}
 
-		var (
-			key   string
-			value uint32
-			keys  []string
-		)
+			m, err := NewMap(&MapSpec{
+				Type:       mapType,
+				KeySize:    keySize,
+				ValueSize:  4,
+				MaxEntries: 2,
+			})
+			qt.Assert(t, qt.IsNil(err))
+			defer m.Close()
 
-		entries := hash.Drain()
-		for entries.Next(&key, &value) {
-			keys = append(keys, key)
-		}
-
-		if err := entries.Err(); err != nil {
-			t.Fatal(err)
-		}
-
-		sort.Strings(keys)
-		qt.Assert(t, qt.DeepEquals(keys, []string{"hello", "world"}))
-	})
-
-	t.Run(Queue.String(), func(t *testing.T) {
-		testutils.SkipOnOldKernel(t, "4.20", "map type queue")
-		queue, err := NewMap(&MapSpec{
-			Type:       Queue,
-			ValueSize:  4,
-			MaxEntries: 2,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer queue.Close()
-
-		for _, v := range []uint32{42, 4242} {
-			if err := queue.Put(nil, v); err != nil {
-				t.Fatal(err)
+			for _, v := range data {
+				if keySize != 0 {
+					anyKey = uint32(v)
+				}
+				err := m.Put(anyKey, uint32(v))
+				qt.Assert(t, qt.IsNil(err))
 			}
-		}
 
-		var (
-			value  uint32
-			values []uint32
-		)
+			entries := m.Drain()
+			for entries.Next(keyPtr, &value) {
+				values = append(values, value)
+			}
+			qt.Assert(t, qt.IsNil(entries.Err()))
 
-		entries := queue.Drain()
-		for entries.Next(nil, &value) {
-			values = append(values, value)
-		}
+			sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+			qt.Assert(t, qt.DeepEquals(values, data))
+		})
+	}
+}
 
-		if err := entries.Err(); err != nil {
-			t.Fatal(err)
-		}
+func TestIterateWrongMap(t *testing.T) {
+	testutils.SkipOnOldKernel(t, "4.20", "map type queue")
 
-		qt.Assert(t, qt.DeepEquals(values, []uint32{42, 4242}))
-
-		if entries.Next(nil, &value) {
-			t.Error("Expected no more entries, got", value)
-		}
-
-		if err := entries.Err(); err != nil {
-			t.Fatal(err)
-		}
+	m, err := NewMap(&MapSpec{
+		Type:       Queue,
+		ValueSize:  4,
+		MaxEntries: 2,
 	})
+	qt.Assert(t, qt.IsNil(err))
+	defer m.Close()
+
+	for _, v := range []uint32{0, 1} {
+		err := m.Put(nil, uint32(v))
+		qt.Assert(t, qt.IsNil(err))
+	}
+
+	var value uint32
+	entries := m.Iterate()
+
+	qt.Assert(t, qt.IsFalse(entries.Next(nil, &value)))
+	qt.Assert(t, qt.IsNotNil(entries.Err()))
+}
+
+func TestDrainWrongMap(t *testing.T) {
+	arr, err := NewMap(&MapSpec{
+		Type:       Array,
+		KeySize:    4,
+		ValueSize:  4,
+		MaxEntries: 10,
+	})
+	qt.Assert(t, qt.IsNil(err))
+	defer arr.Close()
+
+	var key, value uint32
+	entries := arr.Drain()
+
+	qt.Assert(t, qt.IsFalse(entries.Next(&key, &value)))
+	qt.Assert(t, qt.IsNotNil(entries.Err()))
 }
 
 func TestMapIteratorAllocations(t *testing.T) {
@@ -1286,9 +1271,9 @@ func TestMapIteratorAllocations(t *testing.T) {
 	iter := arr.Iterate()
 
 	// AllocsPerRun warms up the function for us.
-	allocs := testing.AllocsPerRun(1, func() {
+	allocs := testing.AllocsPerRun(int(arr.MaxEntries()-1), func() {
 		if !iter.Next(&k, &v) {
-			t.Fatal("Next failed")
+			t.Fatal("Next failed while iterating: %w", iter.Err())
 		}
 	})
 
@@ -1301,11 +1286,17 @@ func TestMapDrainerAllocations(t *testing.T) {
 		Queue,
 	} {
 		t.Run(mapType.String(), func(t *testing.T) {
-			keySize := uint32(4)
+			var (
+				key, value uint32
+				anyKey     interface{}
+				keyPtr     interface{} = &key
+				keySize    uint32      = 4
+			)
 
 			if mapType == Queue {
 				testutils.SkipOnOldKernel(t, "4.20", "map type queue")
 				keySize = 0
+				keyPtr = nil
 			}
 
 			m, err := NewMap(&MapSpec{
@@ -1314,17 +1305,24 @@ func TestMapDrainerAllocations(t *testing.T) {
 				ValueSize:  4,
 				MaxEntries: 10,
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
+			qt.Assert(t, qt.ErrorIs(err, nil))
 			defer m.Close()
 
-			var k, v uint32
+			for i := 0; i < int(m.MaxEntries()); i++ {
+				if keySize != 0 {
+					anyKey = uint32(i)
+				}
+				if err := m.Put(anyKey, uint32(i)); err != nil {
+					t.Fatal(err)
+				}
+			}
+
 			iter := m.Drain()
 
-			// AllocsPerRun warms up the function for us.
-			allocs := testing.AllocsPerRun(1, func() {
-				iter.Next(k, &v)
+			allocs := testing.AllocsPerRun(int(m.MaxEntries()-1), func() {
+				if !iter.Next(keyPtr, &value) {
+					t.Fatal("Next failed while draining: %w", iter.Err())
+				}
 			})
 
 			qt.Assert(t, qt.Equals(allocs, float64(0)))
