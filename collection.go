@@ -483,12 +483,7 @@ func (cl *collectionLoader) loadVariable(varName string) (*Variable, error) {
 		return nil, fmt.Errorf("map %s for variable %s not found", varSpec.MapName, varName)
 	}
 
-	mc, err := m.Clone()
-	if err != nil {
-		return nil, err
-	}
-
-	v, err := newVariableWithOptions(varSpec, mc, cl.opts.Variables)
+	v, err := newVariableWithOptions(varSpec, m, cl.opts.Variables)
 	if err != nil {
 		return nil, fmt.Errorf("variable %v: %w", varName, err)
 	}
