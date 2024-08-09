@@ -81,14 +81,12 @@ type {{ .Name.MapSpecs }} struct {
 type {{ .Name.Objects }} struct {
 	{{ .Name.Programs }}
 	{{ .Name.Maps }}
-	{{ .Name.Variables }}
 }
 
 func (o *{{ .Name.Objects }}) Close() error {
 	return {{ .Name.CloseHelper }}(
 		&o.{{ .Name.Programs }},
 		&o.{{ .Name.Maps }},
-		&o.{{ .Name.Variables }},
 	)
 }
 
@@ -116,23 +114,6 @@ type {{ .Name.VariableSpecs }} struct {
 {{- range $name, $id := .Variables }}
 	{{ $id }} *ebpf.VariableSpec `ebpf:"{{ $name }}"`
 {{- end }}
-}
-
-// {{ .Name.Variables }} contains all variables after they have been loaded into the kernel.
-//
-// It can be passed to {{ .Name.LoadObjects }} or ebpf.CollectionSpec.LoadAndAssign.
-type {{ .Name.Variables }} struct {
-{{- range $name, $id := .Variables }}
-	{{ $id }} *ebpf.Variable `ebpf:"{{ $name }}"`
-{{- end }}
-}
-
-func (m *{{ .Name.Variables }}) Close() error {
-	return {{ .Name.CloseHelper }}(
-{{- range $id := .Variables }}
-		m.{{ $id }},
-{{- end }}
-	)
 }
 
 // {{ .Name.Programs }} contains all programs after they have been loaded into the kernel.

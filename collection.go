@@ -18,9 +18,8 @@ import (
 //
 // Maps and Programs are passed to NewMapWithOptions and NewProgramsWithOptions.
 type CollectionOptions struct {
-	Maps      MapOptions
-	Variables VariableOptions
-	Programs  ProgramOptions
+	Maps     MapOptions
+	Programs ProgramOptions
 
 	// MapReplacements takes a set of Maps that will be used instead of
 	// creating new ones when loading the CollectionSpec.
@@ -67,8 +66,8 @@ func (cs *CollectionSpec) Copy() *CollectionSpec {
 		cpy.Maps[name] = spec.Copy()
 	}
 
-	for name, spec := range cs.Variables {
-		cpy.Variables[name] = spec.Copy()
+	for varName, specs := range cs.Variables {
+		cpy.Variables[varName] = specs
 	}
 
 	for name, spec := range cs.Programs {
@@ -292,7 +291,6 @@ func (cs *CollectionSpec) LoadAndAssign(to interface{}, opts *CollectionOptions)
 
 	// Support assigning Programs and Maps, lazy-loading the required objects.
 	assignedMaps := make(map[string]bool)
-	assignedVars := make(map[string]bool)
 	assignedProgs := make(map[string]bool)
 
 	getValue := func(typ reflect.Type, name string) (interface{}, error) {
@@ -305,10 +303,6 @@ func (cs *CollectionSpec) LoadAndAssign(to interface{}, opts *CollectionOptions)
 		case reflect.TypeOf((*Map)(nil)):
 			assignedMaps[name] = true
 			return loader.loadMap(name)
-
-		case reflect.TypeOf((*Variable)(nil)):
-			assignedVars[name] = true
-			return loader.loadVariable(name)
 
 		default:
 			return nil, fmt.Errorf("unsupported type %s", typ)
@@ -347,9 +341,6 @@ func (cs *CollectionSpec) LoadAndAssign(to interface{}, opts *CollectionOptions)
 	for m := range assignedMaps {
 		delete(loader.maps, m)
 	}
-	for v := range assignedVars {
-		delete(loader.vars, v)
-	}
 	for p := range assignedProgs {
 		delete(loader.programs, p)
 	}
@@ -357,11 +348,11 @@ func (cs *CollectionSpec) LoadAndAssign(to interface{}, opts *CollectionOptions)
 	return nil
 }
 
-// Collection is a collection of Programs and Maps associated with their variables
+// Collection is a collection of Programs and Maps associated
+// with their symbols
 type Collection struct {
-	Programs  map[string]*Program
-	Maps      map[string]*Map
-	Variables map[string]*Variable
+	Programs map[string]*Program
+	Maps     map[string]*Map
 }
 
 // NewCollection creates a Collection from the given spec, creating and
@@ -391,11 +382,6 @@ func NewCollectionWithOptions(spec *CollectionSpec, opts CollectionOptions) (*Co
 			return nil, err
 		}
 	}
-	for varName := range spec.Variables {
-		if _, err := loader.loadVariable(varName); err != nil {
-			return nil, err
-		}
-	}
 
 	for progName, prog := range spec.Programs {
 		if prog.Type == UnspecifiedProgram {
@@ -413,14 +399,13 @@ func NewCollectionWithOptions(spec *CollectionSpec, opts CollectionOptions) (*Co
 		return nil, err
 	}
 
-	// Prevent loader.cleanup from closing maps, vars and programs.
-	maps, vars, progs := loader.maps, loader.vars, loader.programs
-	loader.maps, loader.vars, loader.programs = nil, nil, nil
+	// Prevent loader.cleanup from closing maps and programs.
+	maps, progs := loader.maps, loader.programs
+	loader.maps, loader.programs = nil, nil
 
 	return &Collection{
 		progs,
 		maps,
-		vars,
 	}, nil
 }
 
@@ -428,7 +413,6 @@ type collectionLoader struct {
 	coll     *CollectionSpec
 	opts     *CollectionOptions
 	maps     map[string]*Map
-	vars     map[string]*Variable
 	programs map[string]*Program
 }
 
@@ -453,7 +437,6 @@ func newCollectionLoader(coll *CollectionSpec, opts *CollectionOptions) (*collec
 		coll,
 		opts,
 		make(map[string]*Map),
-		make(map[string]*Variable),
 		make(map[string]*Program),
 	}, nil
 }
@@ -466,30 +449,6 @@ func (cl *collectionLoader) close() {
 	for _, p := range cl.programs {
 		p.Close()
 	}
-}
-
-func (cl *collectionLoader) loadVariable(varName string) (*Variable, error) {
-	if s := cl.vars[varName]; s != nil {
-		return s, nil
-	}
-
-	varSpec := cl.coll.Variables[varName]
-	if varSpec == nil {
-		return nil, fmt.Errorf("missing variable %s", varName)
-	}
-
-	m := cl.maps[varSpec.MapName]
-	if m == nil {
-		return nil, fmt.Errorf("map %s for variable %s not found", varSpec.MapName, varName)
-	}
-
-	v, err := newVariableWithOptions(varSpec, m, cl.opts.Variables)
-	if err != nil {
-		return nil, fmt.Errorf("variable %v: %w", varName, err)
-	}
-
-	cl.vars[varName] = v
-	return v, nil
 }
 
 func (cl *collectionLoader) loadMap(mapName string) (*Map, error) {
@@ -524,6 +483,12 @@ func (cl *collectionLoader) loadMap(mapName string) (*Map, error) {
 	if !mapSpec.Type.canStoreMapOrProgram() {
 		if err := m.finalize(mapSpec); err != nil {
 			return nil, fmt.Errorf("finalizing map %s: %w", mapName, err)
+		}
+	}
+
+	for _, spec := range cl.coll.Variables {
+		if spec.MapName == mapName {
+			m.assignVariables(spec)
 		}
 	}
 
@@ -769,7 +734,6 @@ func LoadCollection(file string) (*Collection, error) {
 // for any successful assigns. On error `to` is left in an undefined state.
 func (coll *Collection) Assign(to interface{}) error {
 	assignedMaps := make(map[string]bool)
-	assignedVars := make(map[string]bool)
 	assignedProgs := make(map[string]bool)
 
 	// Assign() only transfers already-loaded Maps and Programs. No extra
@@ -791,13 +755,6 @@ func (coll *Collection) Assign(to interface{}) error {
 			}
 			return nil, fmt.Errorf("missing map %q", name)
 
-		case reflect.TypeOf((*Variable)(nil)):
-			if v := coll.Variables[name]; v != nil {
-				assignedVars[name] = true
-				return v, nil
-			}
-			return nil, fmt.Errorf("missing variable %q", name)
-
 		default:
 			return nil, fmt.Errorf("unsupported type %s", typ)
 		}
@@ -810,9 +767,6 @@ func (coll *Collection) Assign(to interface{}) error {
 	// Finalize ownership transfer
 	for p := range assignedProgs {
 		delete(coll.Programs, p)
-	}
-	for s := range assignedVars {
-		delete(coll.Variables, s)
 	}
 	for m := range assignedMaps {
 		delete(coll.Maps, m)

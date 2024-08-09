@@ -364,10 +364,7 @@ func (b2g *bpf2go) convert(tgt gen.Target, goarches gen.GoArches) (err error) {
 
 	var maps []string
 	for name := range spec.Maps {
-		// Skip .rodata, .data, .bss, etc. sections
-		if !strings.HasPrefix(name, ".") {
-			maps = append(maps, name)
-		}
+		maps = append(maps, name)
 	}
 
 	var vars []string

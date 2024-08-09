@@ -2,6 +2,7 @@ package ebpf
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -34,6 +37,12 @@ var (
 	// and cause unnecessary memory allocations
 	errMapLookupKeyNotExist = fmt.Errorf("lookup: %w", sysErrKeyNotExist)
 )
+
+type VariableSpec struct {
+	Name, MapName string
+	Offset        uint64
+	Size          uint64
+}
 
 // MapOptions control loading a map into the kernel.
 type MapOptions struct {
@@ -254,6 +263,8 @@ type Map struct {
 	pinnedPath string
 	// Per CPU maps return values larger than the size in the spec
 	fullValueSize int
+	vars          map[string]*VariableSpec
+	mmaped        []byte
 }
 
 // NewMapFromFD creates a map from a raw fd.
@@ -530,6 +541,8 @@ func newMap(fd *sys.FD, name string, typ MapType, keySize, valueSize, maxEntries
 		flags,
 		"",
 		int(valueSize),
+		nil,
+		nil,
 	}
 
 	if !typ.hasPerCPUValue() {
@@ -1299,7 +1312,18 @@ func (m *Map) Close() error {
 		return nil
 	}
 
-	return m.fd.Close()
+	var err error
+	if m.isMmaped() {
+		if errMmap := syscall.Munmap(m.mmaped); errMmap != nil {
+			err = fmt.Errorf("failed to munmap: %w", errMmap)
+		}
+	}
+
+	if errClose := m.Close(); errClose != nil {
+		err = errors.Join(err, fmt.Errorf(". failed to close map: %w", errClose))
+	}
+
+	return err
 }
 
 // FD gets the file descriptor of the Map.
@@ -1336,6 +1360,8 @@ func (m *Map) Clone() (*Map, error) {
 		m.flags,
 		"",
 		m.fullValueSize,
+		m.vars,
+		nil,
 	}, nil
 }
 
@@ -1666,4 +1692,203 @@ func sliceLen(slice any) (int, error) {
 		return 0, fmt.Errorf("%T is not a slice", slice)
 	}
 	return sliceValue.Len(), nil
+}
+
+func (m *Map) assignVariables(v *VariableSpec) {
+	if m.vars == nil {
+		m.vars = make(map[string]*VariableSpec)
+	}
+	m.vars[v.Name] = v
+}
+
+func (m *Map) isMmaped() bool {
+	return m.mmaped != nil && len(m.mmaped) > 0
+}
+
+func (m *Map) Mmap() error {
+	if m.isMmaped() {
+		return nil
+	}
+
+	if m.flags&unix.BPF_F_MMAPABLE == 0 || haveMmapableMaps() != nil {
+		return nil
+	}
+
+	proto := syscall.PROT_WRITE
+	if m.flags&unix.BPF_F_RDONLY_PROG == 0 {
+		proto = syscall.PROT_WRITE
+	}
+	data, err := syscall.Mmap(m.FD(), 0, m.fullValueSize*int(m.maxEntries), proto, syscall.MAP_SHARED)
+	if err != nil {
+		return fmt.Errorf("failed to mmap map %s: %w", m.name, err)
+	}
+
+	m.mmaped = data
+	return nil
+}
+
+// Load retrieves the variable value. This operation is performed atomically when
+// the variable is retrieved through the traditional `Map.Lookup`, or when the variable is
+// mmap-ed and the provided argument is one of the following types: uint32, *uint32, int32,
+// *int32, uint64, *uint64, int64, *int64, uintptr, *uintptr, unsafe.Pointer.
+// For all the other types, it uses the non-atomic byte buffer read-write method.
+func (m *Map) LoadVariable(varName string, value interface{}) error {
+	if reflect.ValueOf(value).Kind() != reflect.Ptr {
+		return fmt.Errorf("must provide a pointer")
+	}
+
+	if m.vars == nil {
+		return fmt.Errorf("map has no variables")
+	}
+
+	v, ok := m.vars[varName]
+	if !ok {
+		return fmt.Errorf("no valid variable")
+	}
+
+	if !m.isMmaped() {
+		if err := m.readLookup(varName, value); err != nil {
+			return fmt.Errorf("failed to load value through map lookup: %w", err)
+		}
+		return nil
+	}
+
+	// TODO: ensure sizeof value == v.mmaped
+
+	switch vv := value.(type) {
+	case *uint32:
+		*vv = atomic.LoadUint32((*uint32)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])))
+	case *int32:
+		*vv = atomic.LoadInt32((*int32)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])))
+	case *uint64:
+		*vv = atomic.LoadUint64((*uint64)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])))
+	case *int64:
+		*vv = atomic.LoadInt64((*int64)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])))
+	case *uintptr:
+		*vv = atomic.LoadUintptr((*uintptr)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])))
+	case *unsafe.Pointer:
+		*vv = atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])))
+	default:
+		if err := m.readMmapBuf(varName, value); err != nil {
+			return fmt.Errorf("failed to load value through mmap byte buffer: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// readLookup uses `Map.Lookup` to retrieve the variable value.
+func (m *Map) readLookup(varName string, value interface{}) error {
+	var k int32
+	data := make([]byte, m.valueSize)
+	if err := m.Lookup(&k, data); err != nil {
+		return err
+	}
+
+	v := m.vars[varName]
+
+	buf := bytes.NewReader(data[v.Offset : v.Offset+v.Size])
+	return binary.Read(buf, internal.NativeEndian, value)
+}
+
+// readMmapBuf uses a `bytes.Reader` to read from the mmap-ed data into the provided variable.
+func (m *Map) readMmapBuf(varName string, value interface{}) error {
+	v := m.vars[varName]
+	buf := bytes.NewReader(m.mmaped[v.Offset : v.Offset+v.Size])
+	return binary.Read(buf, internal.NativeEndian, value)
+}
+
+// writeMmapBuf uses a `bytes.Buffer` to write the provided variable into the mmap-ed data.
+func (m *Map) writeMmapBuf(varName string, value interface{}) error {
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, internal.NativeEndian, value); err != nil {
+		return err
+	}
+	v := m.vars[varName]
+	copy(m.mmaped[v.Offset:v.Offset+v.Size], buf.Bytes())
+	return nil
+}
+
+// writeLookup implements the sequential `Map.Lookup` and `Map.Update` to
+// retrieve and update the variable value.
+func (m *Map) writeLookup(varName string, value interface{}) error {
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, internal.NativeEndian, value); err != nil {
+		return err
+	}
+
+	var k int32
+	data := make([]byte, m.valueSize)
+
+	if err := m.Lookup(&k, data); err != nil {
+		return err
+	}
+
+	v := m.vars[varName]
+	copy(data[v.Offset:v.Offset+v.Size], buf.Bytes())
+	return m.Update(k, data, UpdateExist)
+}
+
+// Store changes the variable value. This operation is performed atomically when
+// the variable is mmap-ed and the provided argument is one of the following types:
+// uint32, *uint32, int32, *int32, uint64, *uint64, int64, *int64, uintptr, *uintptr, unsafe.Pointer.
+// For all the other types, it uses the non-atomic byte buffer read-write method when mmap-ed,
+// otherwise it uses `Map.Lookup` and `Map.Update`.
+func (m *Map) StoreVariable(varName string, value interface{}) error {
+	if !m.isMmaped() {
+		if err := m.writeLookup(varName, value); err != nil {
+			return fmt.Errorf("failed to store value through map lookup and update: %w", err)
+		}
+	}
+
+	if m.vars == nil {
+		return fmt.Errorf("map has no variables")
+	}
+
+	v, ok := m.vars[varName]
+	if !ok {
+		return fmt.Errorf("no valid variable")
+	}
+	// TODO: ensure sizeof value == v.mmaped
+
+	switch vv := value.(type) {
+	case uint32:
+		atomic.StoreUint32((*uint32)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])), vv)
+	case *uint32:
+		atomic.StoreUint32((*uint32)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])), *vv)
+	case int32:
+		atomic.StoreInt32((*int32)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])), vv)
+	case *int32:
+		atomic.StoreInt32((*int32)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])), *vv)
+	case uint64:
+		atomic.StoreUint64((*uint64)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])), vv)
+	case *uint64:
+		atomic.StoreUint64((*uint64)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])), *vv)
+	case int64:
+		atomic.StoreInt64((*int64)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])), vv)
+	case *int64:
+		atomic.StoreInt64((*int64)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])), *vv)
+	case uintptr:
+		atomic.StoreUintptr((*uintptr)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])), vv)
+	case *uintptr:
+		atomic.StoreUintptr((*uintptr)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])), *vv)
+	case unsafe.Pointer:
+		atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])), vv)
+	case *unsafe.Pointer:
+		atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&m.mmaped[v.Offset : v.Offset+v.Size][0])), *vv)
+	default:
+		if err := m.writeMmapBuf(varName, value); err != nil {
+			return fmt.Errorf("failed to store value through mmap byte buffer: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (m *Map) GetVariableSize(varName string) (uint64, error) {
+	v, ok := m.vars[varName]
+	if !ok {
+		return 0, fmt.Errorf("no variable %s", varName)
+	}
+	return v.Size, nil
 }

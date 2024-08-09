@@ -61,6 +61,9 @@ type bpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
+	Bss    *ebpf.MapSpec `ebpf:".bss"`
+	Data   *ebpf.MapSpec `ebpf:".data"`
+	Rodata *ebpf.MapSpec `ebpf:".rodata"`
 }
 
 // bpfObjects contains all objects after they have been loaded into the kernel.
@@ -69,14 +72,12 @@ type bpfMapSpecs struct {
 type bpfObjects struct {
 	bpfPrograms
 	bpfMaps
-	bpfVariables
 }
 
 func (o *bpfObjects) Close() error {
 	return _BpfClose(
 		&o.bpfPrograms,
 		&o.bpfMaps,
-		&o.bpfVariables,
 	)
 }
 
@@ -84,10 +85,17 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
+	Bss    *ebpf.Map `ebpf:".bss"`
+	Data   *ebpf.Map `ebpf:".data"`
+	Rodata *ebpf.Map `ebpf:".rodata"`
 }
 
 func (m *bpfMaps) Close() error {
-	return _BpfClose()
+	return _BpfClose(
+		m.Bss,
+		m.Data,
+		m.Rodata,
+	)
 }
 
 // bpfVariableSpecs contains variables before they are loaded into the kernel.
@@ -99,27 +107,6 @@ type bpfVariableSpecs struct {
 	Random         *ebpf.VariableSpec `ebpf:"random"`
 	VarMsg         *ebpf.VariableSpec `ebpf:"var_msg"`
 	XdpProgFuncFmt *ebpf.VariableSpec `ebpf:"xdp_prog_func.___fmt"`
-}
-
-// bpfVariables contains all variables after they have been loaded into the kernel.
-//
-// It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
-type bpfVariables struct {
-	ConstMsg       *ebpf.Variable `ebpf:"const_msg"`
-	PktCount       *ebpf.Variable `ebpf:"pkt_count"`
-	Random         *ebpf.Variable `ebpf:"random"`
-	VarMsg         *ebpf.Variable `ebpf:"var_msg"`
-	XdpProgFuncFmt *ebpf.Variable `ebpf:"xdp_prog_func.___fmt"`
-}
-
-func (m *bpfVariables) Close() error {
-	return _BpfClose(
-		m.ConstMsg,
-		m.PktCount,
-		m.Random,
-		m.VarMsg,
-		m.XdpProgFuncFmt,
-	)
 }
 
 // bpfPrograms contains all programs after they have been loaded into the kernel.

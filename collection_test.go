@@ -67,8 +67,8 @@ func TestCollectionSpecCopy(t *testing.T) {
 			},
 		},
 		map[string]*VariableSpec{
-			"test": {
-				Name:    "test",
+			"attempt": {
+				Name:    "attempt",
 				MapName: ".rodata",
 				Offset:  0,
 				Size:    4,

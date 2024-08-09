@@ -69,10 +69,6 @@ func (n templateName) Maps() string {
 	return string(n) + "Maps"
 }
 
-func (n templateName) Variables() string {
-	return string(n) + "Variables"
-}
-
 func (n templateName) Programs() string {
 	return string(n) + "Programs"
 }

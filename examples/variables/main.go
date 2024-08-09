@@ -17,7 +17,7 @@ package main
 import (
 	"fmt"
 	"log"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"os"
 	"strings"
@@ -62,45 +62,51 @@ func main() {
 	log.Printf("Press Ctrl-C to exit and remove the program")
 
 	// Initialize variables that we want to use from userspace
-	for _, v := range []*ebpf.Variable{objs.PktCount, objs.Random, objs.ConstMsg, objs.VarMsg} {
+	for _, v := range []*ebpf.Map{objs.Bss, objs.Rodata, objs.Data} {
 		v.Mmap()
+	}
+
+	s1, err := objs.Rodata.GetVariableSize("const_msg")
+	if err != nil {
+		log.Fatal(err)
+	}
+	s2, err := objs.Data.GetVariableSize("var_msg")
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	var (
 		sb                    strings.Builder
 		vPkt                  uint64
 		vRandom, newRandomVal uint32
-		vMsgConst             []byte = make([]byte, objs.ConstMsg.Size())
-		vMsgVar, newMsgVar    []byte = make([]byte, objs.VarMsg.Size()), make([]byte, objs.VarMsg.Size())
+		vMsgConst             []byte = make([]byte, s1)
+		vMsgVar, newMsgVar    []byte = make([]byte, s2), make([]byte, s2)
 	)
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		if err = objs.PktCount.Load(&vPkt); err != nil {
+		if err = objs.Bss.LoadVariable("pkt_count", &vPkt); err != nil {
 			log.Fatal(err)
 		}
-		if err = objs.Random.Load(&vRandom); err != nil {
+		if err = objs.Data.LoadVariable("random", &vRandom); err != nil {
 			log.Fatal(err)
 		}
-		if err = objs.ConstMsg.Load(&vMsgConst); err != nil {
+		if err = objs.Data.LoadVariable("var_msg", &vMsgVar); err != nil {
 			log.Fatal(err)
 		}
-		if err = objs.VarMsg.Load(&vMsgVar); err != nil {
+		if err = objs.Rodata.LoadVariable("const_msg", &vMsgConst); err != nil {
 			log.Fatal(err)
 		}
 
 		newRandomVal = rand.Uint32()
-		if err = objs.Random.Store(newRandomVal); err != nil {
+		if err = objs.Data.StoreVariable("random", newRandomVal); err != nil {
 			log.Fatal(err)
 		}
 
 		copy(newMsgVar, vMsgVar)
 		newMsgVar[len(newMsgVar)-2] = (newMsgVar[len(newMsgVar)-2]+1)%2 + 40
-		if err = objs.VarMsg.Store(newMsgVar); err != nil {
-			log.Fatal(err)
-		}
-		if err = objs.PktCount.Load(&vPkt); err != nil {
+		if err = objs.Data.StoreVariable("var_msg", newMsgVar); err != nil {
 			log.Fatal(err)
 		}
 
