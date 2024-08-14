@@ -12,6 +12,120 @@ import (
 	"github.com/cilium/ebpf"
 )
 
+type bpfBss struct{ PktCount uint64 }
+
+// LoadPktCount interacts with the provided map to load the value of the pkt_count variable.
+// The Bss map for which the bpfBss structure has been generated must be provided,
+// otherwise an error will be returned.
+func (b *bpfBss) LoadPktCount(m *ebpf.Map) error {
+	if m.Name() != ".bss" {
+		return fmt.Errorf("wrong map provided to LoadPktCount: expected .bss, got %s", m.Name())
+	}
+	return m.LoadAt(0, uint32(0), &b.PktCount)
+}
+
+// StorePktCount interacts with the provided map to store the value of the pkt_count variable.
+// The Bss map for which the bpfBss structure has been generated must be provided,
+// otherwise an error will be returned.
+func (b *bpfBss) StorePktCount(m *ebpf.Map) error {
+	if m.Name() != ".bss" {
+		return fmt.Errorf("wrong map provided to StorePktCount: expected .bss, got %s", m.Name())
+	}
+	return m.StoreAt(0, uint32(0), &b.PktCount)
+}
+
+type bpfData struct {
+	Random uint32
+	VarMsg [16]int8
+}
+
+// LoadRandom interacts with the provided map to load the value of the random variable.
+// The Data map for which the bpfData structure has been generated must be provided,
+// otherwise an error will be returned.
+func (b *bpfData) LoadRandom(m *ebpf.Map) error {
+	if m.Name() != ".data" {
+		return fmt.Errorf("wrong map provided to LoadRandom: expected .data, got %s", m.Name())
+	}
+	return m.LoadAt(0, uint32(0), &b.Random)
+}
+
+// StoreRandom interacts with the provided map to store the value of the random variable.
+// The Data map for which the bpfData structure has been generated must be provided,
+// otherwise an error will be returned.
+func (b *bpfData) StoreRandom(m *ebpf.Map) error {
+	if m.Name() != ".data" {
+		return fmt.Errorf("wrong map provided to StoreRandom: expected .data, got %s", m.Name())
+	}
+	return m.StoreAt(0, uint32(0), &b.Random)
+}
+
+// LoadVarMsg interacts with the provided map to load the value of the var_msg variable.
+// The Data map for which the bpfData structure has been generated must be provided,
+// otherwise an error will be returned.
+func (b *bpfData) LoadVarMsg(m *ebpf.Map) error {
+	if m.Name() != ".data" {
+		return fmt.Errorf("wrong map provided to LoadVarMsg: expected .data, got %s", m.Name())
+	}
+	return m.LoadAt(4, uint32(0), &b.VarMsg)
+}
+
+// StoreVarMsg interacts with the provided map to store the value of the var_msg variable.
+// The Data map for which the bpfData structure has been generated must be provided,
+// otherwise an error will be returned.
+func (b *bpfData) StoreVarMsg(m *ebpf.Map) error {
+	if m.Name() != ".data" {
+		return fmt.Errorf("wrong map provided to StoreVarMsg: expected .data, got %s", m.Name())
+	}
+	return m.StoreAt(4, uint32(0), &b.VarMsg)
+}
+
+type bpfRodata struct {
+	ConstMsg [16]int8
+	_        [72]byte
+}
+
+// LoadConstMsg interacts with the provided map to load the value of the const_msg variable.
+// The Rodata map for which the bpfRodata structure has been generated must be provided,
+// otherwise an error will be returned.
+func (b *bpfRodata) LoadConstMsg(m *ebpf.Map) error {
+	if m.Name() != ".rodata" {
+		return fmt.Errorf("wrong map provided to LoadConstMsg: expected .rodata, got %s", m.Name())
+	}
+	return m.LoadAt(0, uint32(0), &b.ConstMsg)
+}
+
+// StoreConstMsg interacts with the provided map to store the value of the const_msg variable.
+// The Rodata map for which the bpfRodata structure has been generated must be provided,
+// otherwise an error will be returned.
+func (b *bpfRodata) StoreConstMsg(m *ebpf.Map) error {
+	if m.Name() != ".rodata" {
+		return fmt.Errorf("wrong map provided to StoreConstMsg: expected .rodata, got %s", m.Name())
+	}
+	return m.StoreAt(0, uint32(0), &b.ConstMsg)
+}
+
+type bpfRodatanamed struct{ ConstNamedMsg [26]int8 }
+
+// LoadConstNamedMsg interacts with the provided map to load the value of the const_named_msg variable.
+// The Rodatanamed map for which the bpfRodatanamed structure has been generated must be provided,
+// otherwise an error will be returned.
+func (b *bpfRodatanamed) LoadConstNamedMsg(m *ebpf.Map) error {
+	if m.Name() != ".rodata.named" {
+		return fmt.Errorf("wrong map provided to LoadConstNamedMsg: expected .rodata.named, got %s", m.Name())
+	}
+	return m.LoadAt(0, uint32(0), &b.ConstNamedMsg)
+}
+
+// StoreConstNamedMsg interacts with the provided map to store the value of the const_named_msg variable.
+// The Rodatanamed map for which the bpfRodatanamed structure has been generated must be provided,
+// otherwise an error will be returned.
+func (b *bpfRodatanamed) StoreConstNamedMsg(m *ebpf.Map) error {
+	if m.Name() != ".rodata.named" {
+		return fmt.Errorf("wrong map provided to StoreConstNamedMsg: expected .rodata.named, got %s", m.Name())
+	}
+	return m.StoreAt(0, uint32(0), &b.ConstNamedMsg)
+}
+
 // loadBpf returns the embedded CollectionSpec for bpf.
 func loadBpf() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_BpfBytes)
@@ -47,7 +161,6 @@ func loadBpfObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 type bpfSpecs struct {
 	bpfProgramSpecs
 	bpfMapSpecs
-	bpfVariableSpecs
 }
 
 // bpfSpecs contains programs before they are loaded into the kernel.
@@ -61,9 +174,11 @@ type bpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type bpfMapSpecs struct {
-	Bss    *ebpf.MapSpec `ebpf:".bss"`
-	Data   *ebpf.MapSpec `ebpf:".data"`
-	Rodata *ebpf.MapSpec `ebpf:".rodata"`
+	Bss         *ebpf.MapSpec `ebpf:".bss"`
+	Data        *ebpf.MapSpec `ebpf:".data"`
+	Rodata      *ebpf.MapSpec `ebpf:".rodata"`
+	Rodatanamed *ebpf.MapSpec `ebpf:".rodata.named"`
+	MapPktCount *ebpf.MapSpec `ebpf:"map_pkt_count"`
 }
 
 // bpfObjects contains all objects after they have been loaded into the kernel.
@@ -85,9 +200,11 @@ func (o *bpfObjects) Close() error {
 //
 // It can be passed to loadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type bpfMaps struct {
-	Bss    *ebpf.Map `ebpf:".bss"`
-	Data   *ebpf.Map `ebpf:".data"`
-	Rodata *ebpf.Map `ebpf:".rodata"`
+	Bss         *ebpf.Map `ebpf:".bss"`
+	Data        *ebpf.Map `ebpf:".data"`
+	Rodata      *ebpf.Map `ebpf:".rodata"`
+	Rodatanamed *ebpf.Map `ebpf:".rodata.named"`
+	MapPktCount *ebpf.Map `ebpf:"map_pkt_count"`
 }
 
 func (m *bpfMaps) Close() error {
@@ -95,18 +212,9 @@ func (m *bpfMaps) Close() error {
 		m.Bss,
 		m.Data,
 		m.Rodata,
+		m.Rodatanamed,
+		m.MapPktCount,
 	)
-}
-
-// bpfVariableSpecs contains variables before they are loaded into the kernel.
-//
-// It can be passed ebpf.CollectionSpec.Assign.
-type bpfVariableSpecs struct {
-	ConstMsg       *ebpf.VariableSpec `ebpf:"const_msg"`
-	PktCount       *ebpf.VariableSpec `ebpf:"pkt_count"`
-	Random         *ebpf.VariableSpec `ebpf:"random"`
-	VarMsg         *ebpf.VariableSpec `ebpf:"var_msg"`
-	XdpProgFuncFmt *ebpf.VariableSpec `ebpf:"xdp_prog_func.___fmt"`
 }
 
 // bpfPrograms contains all programs after they have been loaded into the kernel.

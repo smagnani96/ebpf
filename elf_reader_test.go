@@ -14,6 +14,7 @@ import (
 
 	"github.com/cilium/ebpf/btf"
 	"github.com/cilium/ebpf/internal"
+	"github.com/cilium/ebpf/internal/sys"
 	"github.com/cilium/ebpf/internal/testutils"
 	"github.com/cilium/ebpf/internal/unix"
 
@@ -24,122 +25,199 @@ import (
 )
 
 func TestLoadCollectionSpec(t *testing.T) {
-	coll := &CollectionSpec{
-		Maps: map[string]*MapSpec{
-			"hash_map": {
-				Name:       "hash_map",
-				Type:       Hash,
-				KeySize:    4,
-				ValueSize:  8,
-				MaxEntries: 1,
-				Flags:      unix.BPF_F_NO_PREALLOC,
-			},
-			"hash_map2": {
-				Name:       "hash_map2",
-				Type:       Hash,
-				KeySize:    4,
-				ValueSize:  8,
-				MaxEntries: 2,
-			},
-			"array_of_hash_map": {
-				Name:       "array_of_hash_map",
-				Type:       ArrayOfMaps,
-				KeySize:    4,
-				MaxEntries: 2,
-			},
-			"perf_event_array": {
-				Name:       "perf_event_array",
-				Type:       PerfEventArray,
-				MaxEntries: 4096,
-			},
-			"btf_pin": {
-				Name:       "btf_pin",
-				Type:       Hash,
-				KeySize:    4,
-				ValueSize:  8,
-				MaxEntries: 1,
-				Pinning:    PinByName,
-			},
-			"btf_outer_map": {
-				Name:       "btf_outer_map",
-				Type:       ArrayOfMaps,
-				KeySize:    4,
-				ValueSize:  4,
-				MaxEntries: 1,
-				InnerMap: &MapSpec{
-					Name:       "btf_outer_map_inner",
+	var flags uint32
+	if haveFeatErr := haveMmapableMaps(); haveFeatErr == nil {
+		flags = uint32(sys.BPF_F_MMAPABLE)
+	}
+
+	getCollectionSpec := func(byteOrder binary.ByteOrder) *CollectionSpec {
+		coll := &CollectionSpec{
+			Maps: map[string]*MapSpec{
+				"hash_map": {
+					Name:       "hash_map",
 					Type:       Hash,
+					KeySize:    4,
+					ValueSize:  8,
+					MaxEntries: 1,
+					Flags:      unix.BPF_F_NO_PREALLOC,
+				},
+				"hash_map2": {
+					Name:       "hash_map2",
+					Type:       Hash,
+					KeySize:    4,
+					ValueSize:  8,
+					MaxEntries: 2,
+				},
+				"array_of_hash_map": {
+					Name:       "array_of_hash_map",
+					Type:       ArrayOfMaps,
+					KeySize:    4,
+					MaxEntries: 2,
+				},
+				"perf_event_array": {
+					Name:       "perf_event_array",
+					Type:       PerfEventArray,
+					MaxEntries: 4096,
+				},
+				"btf_pin": {
+					Name:       "btf_pin",
+					Type:       Hash,
+					KeySize:    4,
+					ValueSize:  8,
+					MaxEntries: 1,
+					Pinning:    PinByName,
+				},
+				"btf_outer_map": {
+					Name:       "btf_outer_map",
+					Type:       ArrayOfMaps,
 					KeySize:    4,
 					ValueSize:  4,
 					MaxEntries: 1,
+					InnerMap: &MapSpec{
+						Name:       "btf_outer_map_inner",
+						Type:       Hash,
+						KeySize:    4,
+						ValueSize:  4,
+						MaxEntries: 1,
+					},
 				},
-			},
-			"btf_outer_map_anon": {
-				Name:       "btf_outer_map_anon",
-				Type:       ArrayOfMaps,
-				KeySize:    4,
-				ValueSize:  4,
-				MaxEntries: 1,
-				InnerMap: &MapSpec{
-					Name:       "btf_outer_map_anon_inner",
-					Type:       Hash,
+				"btf_outer_map_anon": {
+					Name:       "btf_outer_map_anon",
+					Type:       ArrayOfMaps,
 					KeySize:    4,
 					ValueSize:  4,
 					MaxEntries: 1,
+					InnerMap: &MapSpec{
+						Name:       "btf_outer_map_anon_inner",
+						Type:       Hash,
+						KeySize:    4,
+						ValueSize:  4,
+						MaxEntries: 1,
+					},
+				},
+				"btf_typedef_map": {
+					Name:       "btf_typedef_map",
+					Type:       Array,
+					KeySize:    4,
+					ValueSize:  8,
+					MaxEntries: 1,
+				},
+				".bss": {
+					Name:       ".bss",
+					Type:       Array,
+					KeySize:    4,
+					ValueSize:  4,
+					MaxEntries: 1,
+					Flags:      flags,
+				},
+				".data": {
+					Name:       ".data",
+					Type:       Array,
+					KeySize:    4,
+					ValueSize:  4,
+					MaxEntries: 1,
+					Flags:      flags,
+				},
+				".rodata": {
+					Name:       ".rodata",
+					Type:       Array,
+					KeySize:    4,
+					ValueSize:  24,
+					MaxEntries: 1,
+					Freeze:     true,
+					Flags:      flags | uint32(unix.BPF_F_RDONLY_PROG),
+				},
+				".rodata.cst32": {
+					Name:       ".rodata.cst32",
+					Type:       Array,
+					KeySize:    4,
+					ValueSize:  32,
+					MaxEntries: 1,
+					Freeze:     true,
+					Flags:      flags | uint32(unix.BPF_F_RDONLY_PROG),
+				},
+				".rodata.test": {
+					Name:       ".rodata.test",
+					Type:       Array,
+					KeySize:    4,
+					ValueSize:  4,
+					MaxEntries: 1,
+					Freeze:     true,
+					Flags:      flags | uint32(unix.BPF_F_RDONLY_PROG),
 				},
 			},
-			"btf_typedef_map": {
-				Name:       "btf_typedef_map",
-				Type:       Array,
-				KeySize:    4,
-				ValueSize:  8,
-				MaxEntries: 1,
+			Programs: map[string]*ProgramSpec{
+				"xdp_prog": {
+					Name:        "xdp_prog",
+					Type:        XDP,
+					SectionName: "xdp",
+					License:     "MIT",
+				},
+				"no_relocation": {
+					Name:        "no_relocation",
+					Type:        SocketFilter,
+					SectionName: "socket",
+					License:     "MIT",
+				},
+				"asm_relocation": {
+					Name:        "asm_relocation",
+					Type:        SocketFilter,
+					SectionName: "socket/2",
+					License:     "MIT",
+				},
+				"data_sections": {
+					Name:        "data_sections",
+					Type:        SocketFilter,
+					SectionName: "socket/3",
+					License:     "MIT",
+				},
+				"global_fn3": {
+					Name:        "global_fn3",
+					Type:        UnspecifiedProgram,
+					SectionName: "other",
+					License:     "MIT",
+				},
+				"static_fn": {
+					Name:        "static_fn",
+					Type:        UnspecifiedProgram,
+					SectionName: "static",
+					License:     "MIT",
+				},
+				"anon_const": {
+					Name:        "anon_const",
+					Type:        SocketFilter,
+					SectionName: "socket/4",
+					License:     "MIT",
+				},
 			},
-		},
-		Programs: map[string]*ProgramSpec{
-			"xdp_prog": {
-				Name:        "xdp_prog",
-				Type:        XDP,
-				SectionName: "xdp",
-				License:     "MIT",
-			},
-			"no_relocation": {
-				Name:        "no_relocation",
-				Type:        SocketFilter,
-				SectionName: "socket",
-				License:     "MIT",
-			},
-			"asm_relocation": {
-				Name:        "asm_relocation",
-				Type:        SocketFilter,
-				SectionName: "socket/2",
-				License:     "MIT",
-			},
-			"data_sections": {
-				Name:        "data_sections",
-				Type:        SocketFilter,
-				SectionName: "socket/3",
-				License:     "MIT",
-			},
-			"global_fn3": {
-				Name:        "global_fn3",
-				Type:        UnspecifiedProgram,
-				SectionName: "other",
-				License:     "MIT",
-			},
-			"static_fn": {
-				Name:        "static_fn",
-				Type:        UnspecifiedProgram,
-				SectionName: "static",
-				License:     "MIT",
-			},
-			"anon_const": {
-				Name:        "anon_const",
-				Type:        SocketFilter,
-				SectionName: "socket/4",
-				License:     "MIT",
-			},
-		},
+		}
+		buf := make([]uint8, coll.Maps[".data"].ValueSize)
+		byteOrder.PutUint32(buf, 1)
+		coll.Maps[".data"].Contents = []MapKV{{Key: uint32(0), Value: buf}}
+
+		buf = make([]uint8, coll.Maps[".rodata"].ValueSize)
+		for i, n := range []int32{2, 1, -1, -2, -3, -4} {
+			if n == 1 {
+				// this is the variable arg rewritten by go
+				internal.NativeEndian.PutUint32(buf[i*4:], uint32(n))
+			} else {
+				byteOrder.PutUint32(buf[i*4:], uint32(n))
+			}
+		}
+		coll.Maps[".rodata"].Contents = []MapKV{{Key: uint32(0), Value: buf}}
+
+		buf = make([]uint8, coll.Maps[".rodata.cst32"].ValueSize)
+		for i, n := range []uint64{0, 1, 2, 3} {
+			byteOrder.PutUint64(buf[i*8:], n)
+		}
+		coll.Maps[".rodata.cst32"].Contents = []MapKV{{Key: uint32(0), Value: buf}}
+
+		buf = make([]uint8, coll.Maps[".rodata.test"].ValueSize)
+		// this is the variable arg2 rewritten by go
+		internal.NativeEndian.PutUint32(buf, uint32(2))
+		coll.Maps[".rodata.test"].Contents = []MapKV{{Key: uint32(0), Value: buf}}
+
+		return coll
 	}
 
 	cmpOpts := cmp.Options{
@@ -155,12 +233,6 @@ func TestLoadCollectionSpec(t *testing.T) {
 		cmpopts.IgnoreFields(ProgramSpec{}, "Instructions", "ByteOrder"),
 		cmpopts.IgnoreFields(MapSpec{}, "Key", "Value"),
 		cmpopts.IgnoreUnexported(ProgramSpec{}),
-		cmpopts.IgnoreMapEntries(func(key string, _ *MapSpec) bool {
-			if key == ".bss" || key == ".data" || strings.HasPrefix(key, ".rodata") {
-				return true
-			}
-			return false
-		}),
 	}
 
 	testutils.Files(t, testutils.Glob(t, "testdata/loader-*.elf"), func(t *testing.T, file string) {
@@ -184,7 +256,9 @@ func TestLoadCollectionSpec(t *testing.T) {
 			t.Error("Rewriting a bogus constant doesn't fail")
 		}
 
-		if diff := cmp.Diff(coll, have, cmpOpts...); diff != "" {
+		collSpec := getCollectionSpec(have.ByteOrder)
+
+		if diff := cmp.Diff(collSpec, have, cmpOpts...); diff != "" {
 			t.Errorf("MapSpec mismatch (-want +got):\n%s", diff)
 		}
 

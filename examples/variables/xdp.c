@@ -16,11 +16,29 @@ char var_msg[] = "I can change :)";
 // Constant variable 	-> .rodata
 const char const_msg[] = "I'm constant :)";
 
+// Named section 		-> .rodata.named
+const char const_named_msg[] SEC(".rodata.named") = "I'm constant and named :)";
+
+/* Define an ARRAY map for also storing ingress packet count */
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__type(key, __u32);
+	__type(value, __u64);
+	__uint(max_entries, 2);
+	__uint(map_flags, BPF_F_MMAPABLE);
+} map_pkt_count SEC(".maps");
+
 SEC("xdp")
 int xdp_prog_func(struct xdp_md *ctx) {
 	pkt_count++;
 
-	bpf_printk("pkt_count=%20llu, random=%10u, const_msg=%s, var_msg=%s", pkt_count, random, const_msg, var_msg);
+	__u32 key    = 1;
+	__u64 *count = bpf_map_lookup_elem(&map_pkt_count, &key);
+	if (count) {
+		__sync_fetch_and_add(count, 1);
+	}
+
+	bpf_printk("pkt_count=%20llu, random=%10u, const_msg=%s, var_msg=%s, const_named=%s", pkt_count, random, const_msg, var_msg, const_named_msg);
 
 	return XDP_PASS;
 }

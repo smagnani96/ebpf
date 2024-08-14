@@ -24,6 +24,9 @@ typedef __u32 __wsum;
 
 #include "bpf_helpers.h"
 
+/* Enable memory-mapping BPF map */
+#define BPF_F_MMAPABLE (1U << 10)
+
 enum bpf_map_type {
 	BPF_MAP_TYPE_UNSPEC                = 0,
 	BPF_MAP_TYPE_HASH                  = 1,
@@ -57,25 +60,14 @@ enum bpf_map_type {
 };
 
 enum xdp_action {
-	XDP_ABORTED = 0,
-	XDP_DROP = 1,
-	XDP_PASS = 2,
-	XDP_TX = 3,
+	XDP_ABORTED  = 0,
+	XDP_DROP     = 1,
+	XDP_PASS     = 2,
+	XDP_TX       = 3,
 	XDP_REDIRECT = 4,
 };
 
-enum tc_action {
-	TC_ACT_UNSPEC 		= -1,
-	TC_ACT_OK 			= 0,
-	TC_ACT_RECLASSIFY 	= 1,
-	TC_ACT_SHOT 		= 2,
-	TC_ACT_PIPE 		= 3,
-	TC_ACT_STOLEN 		= 4,
-	TC_ACT_QUEUED 		= 5,
-	TC_ACT_REPEAT 		= 6,
-	TC_ACT_REDIRECT 	= 7,
-	TC_ACT_JUMP 		= 0x10000000
-};
+enum tc_action { TC_ACT_UNSPEC = -1, TC_ACT_OK = 0, TC_ACT_RECLASSIFY = 1, TC_ACT_SHOT = 2, TC_ACT_PIPE = 3, TC_ACT_STOLEN = 4, TC_ACT_QUEUED = 5, TC_ACT_REPEAT = 6, TC_ACT_REDIRECT = 7, TC_ACT_JUMP = 0x10000000 };
 
 struct xdp_md {
 	__u32 data;
@@ -97,8 +89,8 @@ struct ethhdr {
 };
 
 struct iphdr {
-	__u8 ihl: 4;
-	__u8 version: 4;
+	__u8 ihl : 4;
+	__u8 version : 4;
 	__u8 tos;
 	__be16 tot_len;
 	__be16 id;

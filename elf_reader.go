@@ -43,7 +43,6 @@ type elfCode struct {
 	btf      *btf.Spec
 	extInfo  *btf.ExtInfos
 	maps     map[string]*MapSpec
-	vars     map[string]*VariableSpec
 	kfuncs   map[string]*btf.Func
 	kconfig  *MapSpec
 }
@@ -135,7 +134,6 @@ func LoadCollectionSpecFromReader(rd io.ReaderAt) (*CollectionSpec, error) {
 		btf:         btfSpec,
 		extInfo:     btfExtInfo,
 		maps:        make(map[string]*MapSpec),
-		vars:        make(map[string]*VariableSpec),
 		kfuncs:      make(map[string]*btf.Func),
 	}
 
@@ -176,7 +174,7 @@ func LoadCollectionSpecFromReader(rd io.ReaderAt) (*CollectionSpec, error) {
 		return nil, fmt.Errorf("load programs: %w", err)
 	}
 
-	return &CollectionSpec{ec.maps, ec.vars, progs, btfSpec, ec.ByteOrder}, nil
+	return &CollectionSpec{ec.maps, progs, btfSpec, ec.ByteOrder}, nil
 }
 
 func loadLicense(sec *elf.Section) (string, error) {
@@ -1100,15 +1098,6 @@ func (ec *elfCode) loadDataSections() error {
 			continue
 		}
 
-		for off, sym := range sec.symbols {
-			ec.vars[sym.Name] = &VariableSpec{
-				Name:    sym.Name,
-				MapName: sec.Name,
-				Offset:  off,
-				Size:    sym.Size,
-			}
-		}
-
 		var flags uint32
 		if haveFeatErr := haveMmapableMaps(); haveFeatErr == nil {
 			flags = uint32(sys.BPF_F_MMAPABLE)
@@ -1156,7 +1145,7 @@ func (ec *elfCode) loadDataSections() error {
 		}
 
 		if strings.HasPrefix(sec.Name, ".rodata") {
-			mapSpec.Flags = unix.BPF_F_RDONLY_PROG
+			mapSpec.Flags |= unix.BPF_F_RDONLY_PROG
 			mapSpec.Freeze = true
 		}
 

@@ -35,9 +35,8 @@ type CollectionOptions struct {
 
 // CollectionSpec describes a collection.
 type CollectionSpec struct {
-	Maps      map[string]*MapSpec
-	Variables map[string]*VariableSpec
-	Programs  map[string]*ProgramSpec
+	Maps     map[string]*MapSpec
+	Programs map[string]*ProgramSpec
 
 	// Types holds type information about Maps and Programs.
 	// Modifications to Types are currently undefined behaviour.
@@ -56,7 +55,6 @@ func (cs *CollectionSpec) Copy() *CollectionSpec {
 
 	cpy := CollectionSpec{
 		Maps:      make(map[string]*MapSpec, len(cs.Maps)),
-		Variables: make(map[string]*VariableSpec, len(cs.Variables)),
 		Programs:  make(map[string]*ProgramSpec, len(cs.Programs)),
 		ByteOrder: cs.ByteOrder,
 		Types:     cs.Types.Copy(),
@@ -64,10 +62,6 @@ func (cs *CollectionSpec) Copy() *CollectionSpec {
 
 	for name, spec := range cs.Maps {
 		cpy.Maps[name] = spec.Copy()
-	}
-
-	for varName, specs := range cs.Variables {
-		cpy.Variables[varName] = specs
 	}
 
 	for name, spec := range cs.Programs {
@@ -483,12 +477,6 @@ func (cl *collectionLoader) loadMap(mapName string) (*Map, error) {
 	if !mapSpec.Type.canStoreMapOrProgram() {
 		if err := m.finalize(mapSpec); err != nil {
 			return nil, fmt.Errorf("finalizing map %s: %w", mapName, err)
-		}
-	}
-
-	for _, spec := range cl.coll.Variables {
-		if spec.MapName == mapName {
-			m.assignVariables(spec)
 		}
 	}
 

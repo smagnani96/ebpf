@@ -15,6 +15,7 @@ import (
 {{- if .Types }}
 {{- range $type := .Types }}
 {{ $.TypeDeclaration (index $.TypeNames $type) $type }}
+{{ $.TypeHelpers (index $.TypeNames $type) $type }}
 
 {{ end }}
 {{- end }}
@@ -54,7 +55,6 @@ func {{ .Name.LoadObjects }}(obj interface{}, opts *ebpf.CollectionOptions) (err
 type {{ .Name.Specs }} struct {
 	{{ .Name.ProgramSpecs }}
 	{{ .Name.MapSpecs }}
-	{{ .Name.VariableSpecs }}
 }
 
 // {{ .Name.Specs }} contains programs before they are loaded into the kernel.
@@ -105,15 +105,6 @@ func (m *{{ .Name.Maps }}) Close() error {
 		m.{{ $id }},
 {{- end }}
 	)
-}
-
-// {{ .Name.VariableSpecs }} contains variables before they are loaded into the kernel.
-//
-// It can be passed ebpf.CollectionSpec.Assign.
-type {{ .Name.VariableSpecs }} struct {
-{{- range $name, $id := .Variables }}
-	{{ $id }} *ebpf.VariableSpec `ebpf:"{{ $name }}"`
-{{- end }}
 }
 
 // {{ .Name.Programs }} contains all programs after they have been loaded into the kernel.

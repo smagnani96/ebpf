@@ -4,9 +4,36 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"text/template"
 )
 
 var errNestedTooDeep = errors.New("nested too deep")
+
+// Template for the load/store helper for variables.
+const loadStoreFuncHelper = `
+// {{.MethodName}}{{.VarIntName}} interacts with the provided map to {{.Action}} the value of the {{.VarName}} variable.
+// The {{.DatasecIntName}} map for which the {{.TypeName}} structure has been generated must be provided,
+// otherwise an error will be returned.
+func (b *{{.TypeName}}) {{.MethodName}}{{.VarIntName}}(m *ebpf.Map) error {
+	if m.Name() != "{{.DatasecName}}" {
+		return fmt.Errorf("wrong map provided to {{.MethodName}}{{.VarIntName}}: expected {{.DatasecName}}, got %s", m.Name())
+	}
+	return m.{{.MethodName}}At({{.Offset}}, uint32(0), &b.{{.VarIntName}})
+}
+`
+
+// LoadStoreHelperData hold the needed data to fill the loadStoreFuncHelper template,
+// used to generate helper functions for interacting with data sections of the program.
+type LoadStoreHelperData struct {
+	MethodName     string
+	VarName        string
+	VarIntName     string
+	Action         string
+	DatasecIntName string
+	DatasecName    string
+	TypeName       string
+	Offset         uint32
+}
 
 // GoFormatter converts a Type to Go syntax.
 //
@@ -31,6 +58,15 @@ type GoFormatter struct {
 func (gf *GoFormatter) TypeDeclaration(name string, typ Type) (string, error) {
 	gf.w.Reset()
 	if err := gf.writeTypeDecl(name, typ); err != nil {
+		return "", err
+	}
+	return gf.w.String(), nil
+}
+
+// TypeHelpers generates Go helpers for a BTF type.
+func (gf *GoFormatter) TypeHelpers(name string, typ Type) (string, error) {
+	gf.w.Reset()
+	if err := gf.writeTypeHelpers(name, typ); err != nil {
 		return "", err
 	}
 	return gf.w.String(), nil
@@ -86,6 +122,33 @@ func (gf *GoFormatter) writeTypeDecl(name string, typ Type) error {
 		fmt.Fprintf(&gf.w, "%s %s = %d; ", id, name, value)
 	}
 	gf.w.WriteString(")")
+
+	return nil
+}
+
+// writeTypeHelpers outputs helpers for the given type.
+//
+// It encodes https://go.dev/ref/spec#Method_declarations:
+//
+//	func (r *Receiver) FuncName(params ...) (return values...) {...}
+func (gf *GoFormatter) writeTypeHelpers(name string, typ Type) error {
+	if name == "" {
+		return fmt.Errorf("need a name for type %s helpers", typ)
+	}
+
+	typ = skipQualifiers(typ)
+
+	var err error
+	switch v := skipQualifiers(typ).(type) {
+	case *Datasec:
+		err = gf.writeDatasecFunc(gf.Names[typ], v)
+	default:
+		return fmt.Errorf("helpers for type %T: %w", v, ErrNotSupported)
+	}
+
+	if err != nil {
+		return fmt.Errorf("%s: %w", typ, err)
+	}
 
 	return nil
 }
@@ -327,6 +390,53 @@ func (gf *GoFormatter) writeDatasecLit(ds *Datasec, depth int) error {
 
 	gf.writePadding(ds.Size - prevOffset)
 	gf.w.WriteString("}")
+	return nil
+}
+
+func (gf *GoFormatter) writeDatasecFunc(typeName string, ds *Datasec) error {
+
+	tmpl, err := template.New("helper").Parse(loadStoreFuncHelper)
+	if err != nil {
+		return fmt.Errorf("failed to parse template: %w", err)
+	}
+
+	prevOffset := uint32(0)
+	for i, vsi := range ds.Vars {
+		v, ok := vsi.Type.(*Var)
+
+		if !ok {
+			return fmt.Errorf("can't format %s as part of data section", vsi.Type)
+		}
+
+		if v.Linkage != GlobalVar {
+			// Ignore static, extern, etc. for now.
+			continue
+		}
+
+		if v.Name == "" {
+			return fmt.Errorf("variable %d: empty name", i)
+		}
+
+		for _, hName := range []string{"Load", "Store"} {
+			data := LoadStoreHelperData{
+				MethodName:     hName,
+				VarName:        v.Name,
+				VarIntName:     gf.identifier(v.Name),
+				Action:         strings.ToLower(hName),
+				DatasecIntName: gf.identifier(ds.Name),
+				DatasecName:    ds.Name,
+				TypeName:       typeName,
+				Offset:         prevOffset,
+			}
+
+			if err := tmpl.Execute(&gf.w, data); err != nil {
+				return fmt.Errorf("failed to execute template for %s%s: %w", hName, data.VarIntName, err)
+			}
+		}
+
+		prevOffset = vsi.Offset + vsi.Size
+	}
+
 	return nil
 }
 
