@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"unsafe"
 
 	"github.com/cilium/ebpf/internal/unix"
 )
@@ -142,4 +143,9 @@ func (mm *Memory) WriteAt(p []byte, off int64) (int, error) {
 	}
 
 	return n, nil
+}
+
+// reinterp reinterprets a pointer of type In to a pointer of type Out.
+func reinterp[Out any, In any](in *In) *Out {
+	return (*Out)(unsafe.Pointer(in))
 }

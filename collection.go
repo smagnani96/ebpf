@@ -197,6 +197,19 @@ func (cs *CollectionSpec) RewriteConstants(consts map[string]interface{}) error 
 // if the same Spec is assigned multiple times.
 func (cs *CollectionSpec) Assign(to interface{}) error {
 	getValue := func(typ reflect.Type, name string) (interface{}, error) {
+		handleVariableSpec := func() (*VariableSpec, error) {
+			if v := cs.Variables[name]; v != nil {
+				return v, nil
+			}
+			return nil, fmt.Errorf("missing variable %q", name)
+		}
+		handleMapSpec := func() (*MapSpec, error) {
+			if m := cs.Maps[name]; m != nil {
+				return m, nil
+			}
+			return nil, fmt.Errorf("missing map %q", name)
+		}
+
 		switch typ {
 		case reflect.TypeOf((*ProgramSpec)(nil)):
 			if p := cs.Programs[name]; p != nil {
@@ -205,18 +218,18 @@ func (cs *CollectionSpec) Assign(to interface{}) error {
 			return nil, fmt.Errorf("missing program %q", name)
 
 		case reflect.TypeOf((*MapSpec)(nil)):
-			if m := cs.Maps[name]; m != nil {
-				return m, nil
-			}
-			return nil, fmt.Errorf("missing map %q", name)
+			return handleMapSpec()
 
 		case reflect.TypeOf((*VariableSpec)(nil)):
-			if v := cs.Variables[name]; v != nil {
-				return v, nil
-			}
-			return nil, fmt.Errorf("missing variable %q", name)
+			return handleVariableSpec()
 
 		default:
+			if typ.ConvertibleTo(reflect.TypeOf((*VariableSpec)(nil))) {
+				return handleVariableSpec()
+			}
+			if typ.ConvertibleTo(reflect.TypeOf((*MapSpec)(nil))) {
+				return handleMapSpec()
+			}
 			return nil, fmt.Errorf("unsupported type %s", typ)
 		}
 	}
@@ -264,6 +277,14 @@ func (cs *CollectionSpec) LoadAndAssign(to interface{}, opts *CollectionOptions)
 	assignedVars := make(map[string]bool)
 
 	getValue := func(typ reflect.Type, name string) (interface{}, error) {
+		handleMap := func() (*Map, error) {
+			assignedMaps[name] = true
+			return loader.loadMap(name)
+		}
+		handleVariable := func() (*Variable, error) {
+			assignedVars[name] = true
+			return loader.loadVariable(name)
+		}
 		switch typ {
 
 		case reflect.TypeOf((*Program)(nil)):
@@ -271,14 +292,18 @@ func (cs *CollectionSpec) LoadAndAssign(to interface{}, opts *CollectionOptions)
 			return loader.loadProgram(name)
 
 		case reflect.TypeOf((*Map)(nil)):
-			assignedMaps[name] = true
-			return loader.loadMap(name)
+			return handleMap()
 
 		case reflect.TypeOf((*Variable)(nil)):
-			assignedVars[name] = true
-			return loader.loadVariable(name)
+			return handleVariable()
 
 		default:
+			if typ.ConvertibleTo(reflect.TypeOf((*Variable)(nil))) {
+				return handleVariable()
+			}
+			if typ.ConvertibleTo(reflect.TypeOf((*Map)(nil))) {
+				return handleMap()
+			}
 			return nil, fmt.Errorf("unsupported type %s", typ)
 		}
 	}
@@ -826,6 +851,21 @@ func (coll *Collection) Assign(to interface{}) error {
 	// Assign() only transfers already-loaded Maps and Programs. No extra
 	// loading is done.
 	getValue := func(typ reflect.Type, name string) (interface{}, error) {
+		handleMap := func() (*Map, error) {
+			if m := coll.Maps[name]; m != nil {
+				assignedMaps[name] = true
+				return m, nil
+			}
+			return nil, fmt.Errorf("missing map %q", name)
+		}
+		handleVariable := func() (*Variable, error) {
+			if v := coll.Variables[name]; v != nil {
+				assignedVars[name] = true
+				return v, nil
+			}
+			return nil, fmt.Errorf("missing variable %q", name)
+		}
+
 		switch typ {
 
 		case reflect.TypeOf((*Program)(nil)):
@@ -836,20 +876,18 @@ func (coll *Collection) Assign(to interface{}) error {
 			return nil, fmt.Errorf("missing program %q", name)
 
 		case reflect.TypeOf((*Map)(nil)):
-			if m := coll.Maps[name]; m != nil {
-				assignedMaps[name] = true
-				return m, nil
-			}
-			return nil, fmt.Errorf("missing map %q", name)
+			return handleMap()
 
 		case reflect.TypeOf((*Variable)(nil)):
-			if v := coll.Variables[name]; v != nil {
-				assignedVars[name] = true
-				return v, nil
-			}
-			return nil, fmt.Errorf("missing variable %q", name)
+			return handleVariable()
 
 		default:
+			if typ.ConvertibleTo(reflect.TypeOf((*Variable)(nil))) {
+				return handleVariable()
+			}
+			if typ.ConvertibleTo(reflect.TypeOf((*Map)(nil))) {
+				return handleMap()
+			}
 			return nil, fmt.Errorf("unsupported type %s", typ)
 		}
 	}
@@ -1025,9 +1063,22 @@ func assignValues(to interface{},
 		if !field.value.CanSet() {
 			return fmt.Errorf("field %s: can't set value", field.Name)
 		}
-		field.value.Set(reflect.ValueOf(value))
 
-		assigned[e] = field.Name
+		t := reflect.ValueOf(value)
+		if field.Type == t.Type() {
+			field.value.Set(reflect.ValueOf(value))
+			assigned[e] = field.Name
+			continue
+		}
+
+		if t.Type().ConvertibleTo(field.Type) {
+			field.value.Set(t.Convert(field.Type))
+			assigned[e] = field.Name
+			continue
+		}
+
+		fmt.Println(t.Type(), field.Type)
+		return fmt.Errorf("Non ci siamo")
 	}
 
 	return nil
