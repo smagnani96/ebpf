@@ -34,7 +34,8 @@ func probeProgram(spec *ebpf.ProgramSpec, filteredErrors ...error) error {
 		}
 	}
 	prog, err := ebpf.NewProgramWithOptions(spec, ebpf.ProgramOptions{
-		LogDisabled: true,
+		LogDisabled: false,
+		LogLevel:    ebpf.LogLevelBranch | ebpf.LogLevelInstruction | ebpf.LogLevelStats,
 	})
 	if err == nil {
 		prog.Close()

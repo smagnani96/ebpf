@@ -412,6 +412,8 @@ func newProgramWithOptions(spec *ProgramSpec, opts ProgramOptions) (*Program, er
 	for {
 		var fd *sys.FD
 		fd, err = sys.ProgLoad(attr)
+		fmt.Println(err)
+		fmt.Println(unix.ByteSliceToString(logBuf))
 		if err == nil {
 			return &Program{unix.ByteSliceToString(logBuf), fd, spec.Name, "", spec.Type}, nil
 		}
